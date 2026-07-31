@@ -89,11 +89,12 @@ final class StatusBarController: NSObject {
         onTogglePause(isPaused)
     }
 
-    /// 开启 ⇄ 关闭开机自启，标题按实际操作结果刷新
+    /// 开启 ⇄ 关闭开机自启，标题按实际操作结果刷新（失败提示由 AutostartManager 发出）
     @objc private func toggleAutostartAction() {
         let target = !AutostartManager.isEnabled
         if AutostartManager.setEnabled(target) {
             autostartItem.title = AutostartManager.isEnabled ? "关闭开机自启" : "开启开机自启"
+            Notify.send(title: "HotkeyManager", body: target ? "开机自启已开启" : "开机自启已关闭")
         }
     }
 

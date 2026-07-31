@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onTogglePause: { paused in
                 if paused {
                     HotKeyManager.shared.suspend()
+                    Notify.send(title: "HotkeyManager", body: "热键已暂停")
                 } else {
                     let failed = HotKeyManager.shared.resume()
                     if !failed.isEmpty {
@@ -29,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             title: "部分热键恢复失败",
                             body: "可能被其他应用占用，请调整配置后重新加载。"
                         )
+                    } else {
+                        Notify.send(title: "HotkeyManager", body: "热键已恢复")
                     }
                 }
             }
