@@ -5,11 +5,9 @@ import AppKit
 /// 单个热键配置
 /// - key: 组合键字符串，如 "cmd+1"、"ctrl+alt+a"，最后一段为按键，其余为修饰键
 /// - bundleId: 目标应用 Bundle Identifier（运行中查找、未运行启动、展示名称均由它推导）
-/// - hideMode: 前台再按时的行为，"hide"（默认）或 "minimize"
 struct HotkeyEntry: Codable {
     var key: String = ""
     var bundleId: String = ""
-    var hideMode: String = "hide"
 
     init() {}
 
@@ -17,7 +15,6 @@ struct HotkeyEntry: Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         key = try c.decodeIfPresent(String.self, forKey: .key) ?? ""
         bundleId = try c.decodeIfPresent(String.self, forKey: .bundleId) ?? ""
-        hideMode = try c.decodeIfPresent(String.self, forKey: .hideMode) ?? "hide"
     }
 }
 
@@ -68,6 +65,20 @@ final class ConfigStore {
         }
     }
 
+    /// 保存配置（美化输出）；写入后由 ConfigWatcher 自动触发热重载
+    func save(_ config: AppConfig) -> Bool {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        do {
+            let data = try encoder.encode(config)
+            try data.write(to: fileURL, options: .atomic)
+            return true
+        } catch {
+            NSLog("[HotkeyManager] 保存配置失败：\(error.localizedDescription)")
+            return false
+        }
+    }
+
     /// 用默认编辑器打开配置文件
     func openInEditor() {
         NSWorkspace.shared.open(fileURL)
@@ -77,11 +88,11 @@ final class ConfigStore {
     static let defaultTemplate = """
     {
       "hotkeys": [
-        { "key": "alt+1", "bundleId": "com.tencent.xinWeChat", "hideMode": "hide" },
-        { "key": "alt+2", "bundleId": "com.google.Chrome", "hideMode": "hide" },
-        { "key": "alt+3", "bundleId": "com.apple.Terminal", "hideMode": "hide" },
-        { "key": "alt+4", "bundleId": "com.microsoft.VSCode", "hideMode": "hide" },
-        { "key": "alt+5", "bundleId": "md.obsidian", "hideMode": "hide" }
+        { "key": "alt+1", "bundleId": "com.tencent.xinWeChat" },
+        { "key": "alt+2", "bundleId": "com.google.Chrome" },
+        { "key": "alt+3", "bundleId": "com.apple.Terminal" },
+        { "key": "alt+4", "bundleId": "com.microsoft.VSCode" },
+        { "key": "alt+5", "bundleId": "md.obsidian" }
       ]
     }
     """

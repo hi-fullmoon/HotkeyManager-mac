@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 
 /// 切换引擎，语义对齐 Windows 版 WindowService.ToggleCore：
-/// 未运行 → 启动；已运行非前台（含已隐藏）→ unhide + 置前；已在前台 → 按 hideMode 隐藏或最小化
+/// 未运行 → 启动；已运行非前台（含已隐藏）→ unhide + 置前；已在前台 → 隐藏
 enum AppSwitcher {
     static func toggle(_ entry: HotkeyEntry) {
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
@@ -21,12 +21,8 @@ enum AppSwitcher {
             return
         }
 
-        // 已在前台 → 按 hideMode 隐藏或最小化
-        if entry.hideMode.caseInsensitiveCompare("minimize") == .orderedSame {
-            minimize(app: app, displayName: displayName(for: entry, app: app))
-        } else {
-            app.hide()
-        }
+        // 已在前台 → 隐藏
+        app.hide()
     }
 
     private static func launch(_ entry: HotkeyEntry) {
@@ -95,32 +91,6 @@ enum AppSwitcher {
               let windows = value as? [AXUIElement] else { return }
         for window in windows {
             AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-        }
-    }
-
-    /// 最小化目标应用的全部窗口（AX AXMinimized，需辅助功能权限）
-    private static func minimize(app: NSRunningApplication, displayName: String) {
-        // 未授权时引导授权，本次回退为隐藏
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        guard AXIsProcessTrustedWithOptions(options) else {
-            Notify.send(
-                title: "需要辅助功能权限",
-                body: "最小化「\(displayName)」需要辅助功能权限，本次已改为隐藏。请在 系统设置 → 隐私与安全性 → 辅助功能 中授权 HotkeyManager 后重试。"
-            )
-            app.hide()
-            return
-        }
-
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &value)
-        guard result == .success, let windows = value as? [AXUIElement], !windows.isEmpty else {
-            // 拿不到窗口列表时回退为隐藏
-            app.hide()
-            return
-        }
-        for window in windows {
-            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanTrue)
         }
     }
 

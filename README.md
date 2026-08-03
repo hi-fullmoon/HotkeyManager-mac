@@ -35,7 +35,7 @@ swift run
 ```json
 {
   "hotkeys": [
-    { "key": "alt+1", "bundleId": "com.tencent.xinWeChat", "hideMode": "hide" }
+    { "key": "alt+1", "bundleId": "com.tencent.xinWeChat" }
   ]
 }
 ```
@@ -44,7 +44,6 @@ swift run
 |------|------|
 | `key` | 组合键，`+` 分隔，最后一段为按键、其余为修饰键。修饰键：`ctrl`（⌃）/ `alt`（⌥）/ `shift`（⇧）/ `cmd`（⌘，兼容 `win` 写法）；按键名：`0`~`9`（兼容 `D0`~`D9` 写法）、`F1`~`F15`、`A`~`Z`、`Space`、`Return`、`Tab`、`Escape`、方向键 `Up`/`Down`/`Left`/`Right` 等。例：`"cmd+1"`、`"ctrl+alt+a"` |
 | `bundleId` | 应用 Bundle Identifier：查找运行中应用、未运行时解析路径启动、通知展示名均由它推导 |
-| `hideMode` | 可选，`hide`（隐藏整个应用，默认）或 `minimize`（最小化其窗口，需辅助功能权限） |
 
 查询应用 BundleId：
 
@@ -57,7 +56,7 @@ osascript -e 'id of app "WeChat"'
 ## 注意事项
 
 - 热键被系统或其他应用先注册时会失败，菜单栏会弹通知提示，换一个组合即可
-- 全局热键用 Carbon `RegisterEventHotKey` 实现，**不需要**辅助功能权限；只有 `HideMode: minimize` 需要（首次触发会弹授权引导，未授权时回退为隐藏并提示）
+- 全局热键用 Carbon `RegisterEventHotKey` 实现，**不需要**辅助功能权限；只有「还原其他应用被最小化的窗口」需要（首次触发会弹授权引导，未授权时仅跳过还原，不影响置前）
 - 「暂停热键」会真正注销所有热键（`UnregisterEventHotKey`），恢复时重新注册
 - 开机自启基于 `SMAppService`，开关状态可在 系统设置 → 通用 → 登录项 中查看
 - 修改代码后重新执行 `./build.sh` 即可，ad-hoc 签名保持授权记录不失效
@@ -70,9 +69,11 @@ osascript -e 'id of app "WeChat"'
 │   ├── main.swift               # 入口，.accessory 激活策略
 │   ├── AppDelegate.swift        # 组装各服务，配置变更 → 全量重注册
 │   ├── Config.swift             # Codable 模型 + 存取 + DispatchSource 热重载
-│   ├── KeyCodeMap.swift         # "cmd+1" 组合键 → Carbon 修饰键 + keyCode
+│   ├── KeyCodeMap.swift         # 组合键 ⇄ Carbon 修饰键 + keyCode（含录制用反向映射）
 │   ├── HotKeyManager.swift      # Carbon RegisterEventHotKey 注册/注销/暂停/恢复
-│   ├── AppSwitcher.swift        # 切换核心：启动 / 置前 / 隐藏 / AX 最小化
+│   ├── AppSwitcher.swift        # 切换核心：启动 / 置前 / 隐藏 / AX 还原最小化窗口
+│   ├── HotkeyListWindowController.swift # 设置快捷键窗口（重录 / 添加 / 移除 / 拖拽排序）
+│   ├── HotkeyRecorder.swift     # 录制按键 → 组合键字符串（录制期间挂起全局热键）
 │   ├── StatusBarController.swift# 菜单栏图标与中文菜单
 │   ├── AutostartManager.swift   # SMAppService 开机自启
 │   └── Notify.swift             # UNUserNotificationCenter 通知（失败 NSLog 兜底）

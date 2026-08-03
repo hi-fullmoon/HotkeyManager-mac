@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let configStore = ConfigStore()
     private var watcher: ConfigWatcher?
     private var statusBar: StatusBarController?
+    private lazy var hotkeyListWindow = HotkeyListWindowController(configStore: configStore)
     private var config = AppConfig()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -16,8 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onOpenConfig: { [weak self] in
                 self?.configStore.openInEditor()
             },
-            onReload: { [weak self] in
-                self?.reloadConfig(notifySuccess: true)
+            onShowHotkeyList: { [weak self] in
+                self?.hotkeyListWindow.showWindow(nil)
             },
             onTogglePause: { paused in
                 if paused {
@@ -28,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if !failed.isEmpty {
                         Notify.send(
                             title: "部分热键恢复失败",
-                            body: "可能被其他应用占用，请调整配置后重新加载。"
+                            body: "可能被其他应用占用，请调整配置后重新保存。"
                         )
                     } else {
                         Notify.send(title: "HotkeyManager", body: "热键已恢复")
@@ -37,17 +38,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        reloadConfig(notifySuccess: false)
+        reloadConfig()
 
         // 配置文件保存即热重载
         watcher = ConfigWatcher(fileURL: configStore.fileURL) { [weak self] in
-            self?.reloadConfig(notifySuccess: false)
+            self?.reloadConfig()
         }
         watcher?.start()
     }
 
     /// 重新解析配置并全量重注册热键；解析失败保留旧热键并提示
-    private func reloadConfig(notifySuccess: Bool) {
+    private func reloadConfig() {
         guard let newConfig = configStore.load() else {
             Notify.send(
                 title: "配置解析失败",
@@ -61,6 +62,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         manager.removeAll()
         var failed: [String] = []
         for (index, entry) in config.hotkeys.enumerated() {
+            // 窗口里 + 添加但尚未录制的占位条目：跳过注册，不算失败
+            guard !entry.key.isEmpty else { continue }
             guard let combo = KeyCodeMap.parse(entry.key) else {
                 NSLog("[HotkeyManager] 无法识别的组合键：\(entry.key)")
                 failed.append(entry.key)
@@ -77,8 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 title: "部分热键注册失败",
                 body: "以下热键键名无效或已被占用：\(failed.joined(separator: "、"))"
             )
-        } else if notifySuccess {
-            Notify.send(title: "HotkeyManager", body: "配置已重新加载（\(config.hotkeys.count) 个热键）")
         }
     }
 }

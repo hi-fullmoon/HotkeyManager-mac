@@ -8,14 +8,14 @@ final class StatusBarController: NSObject {
     private var isPaused = false
 
     private let onOpenConfig: () -> Void
-    private let onReload: () -> Void
+    private let onShowHotkeyList: () -> Void
     private let onTogglePause: (Bool) -> Void
 
     init(onOpenConfig: @escaping () -> Void,
-         onReload: @escaping () -> Void,
+         onShowHotkeyList: @escaping () -> Void,
          onTogglePause: @escaping (Bool) -> Void) {
         self.onOpenConfig = onOpenConfig
-        self.onReload = onReload
+        self.onShowHotkeyList = onShowHotkeyList
         self.onTogglePause = onTogglePause
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
@@ -32,13 +32,22 @@ final class StatusBarController: NSObject {
             (150, 36), (82, 142), (122, 142),
             (102, 214), (176, 106), (132, 106),
         ]
-        let side: CGFloat = 18
+        let side: CGFloat = 20
         let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            let s = rect.width / 256
+            // 按闪电的包围盒等比缩放到画布内（留少许边距），避免形状在画布中显得偏小
+            let xs = bolt.map { $0.0 }, ys = bolt.map { $0.1 }
+            let minX = xs.min()!, maxX = xs.max()!
+            let minY = ys.min()!, maxY = ys.max()!
+            let margin: CGFloat = 1.5
+            let s = min((rect.width - margin * 2) / (maxX - minX),
+                        (rect.height - margin * 2) / (maxY - minY))
+            let offsetX = (rect.width - (maxX - minX) * s) / 2
+            let offsetY = (rect.height - (maxY - minY) * s) / 2
             let path = NSBezierPath()
             for (i, p) in bolt.enumerated() {
                 // 翻转 y：图标坐标系 y 向下，AppKit 默认 y 向上
-                let point = NSPoint(x: p.0 * s, y: rect.height - p.1 * s)
+                let point = NSPoint(x: offsetX + (p.0 - minX) * s,
+                                    y: rect.height - (offsetY + (p.1 - minY) * s))
                 i == 0 ? path.move(to: point) : path.line(to: point)
             }
             path.close()
@@ -54,7 +63,7 @@ final class StatusBarController: NSObject {
         let menu = NSMenu()
 
         menu.addItem(makeItem(title: "打开配置文件", action: #selector(openConfigAction), key: "o"))
-        menu.addItem(makeItem(title: "重新加载配置", action: #selector(reloadAction), key: "r"))
+        menu.addItem(makeItem(title: "设置快捷键", action: #selector(showHotkeyListAction), key: "l"))
         menu.addItem(.separator())
 
         pauseItem.title = "暂停热键"
@@ -80,7 +89,7 @@ final class StatusBarController: NSObject {
     }
 
     @objc private func openConfigAction() { onOpenConfig() }
-    @objc private func reloadAction() { onReload() }
+    @objc private func showHotkeyListAction() { onShowHotkeyList() }
 
     /// 暂停 ⇄ 恢复：暂停时真正注销全部热键（对齐 Windows 版行为）
     @objc private func togglePauseAction() {

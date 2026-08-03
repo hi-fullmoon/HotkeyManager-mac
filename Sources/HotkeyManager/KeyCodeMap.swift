@@ -82,6 +82,33 @@ enum KeyCodeMap {
         "win":     UInt32(cmdKey), // Windows 版的 Win 键习惯映射到 Cmd
     ]
 
+    // MARK: - keyCode → 键名（录制快捷键用）
+
+    /// 由 keyCode + Carbon 修饰键生成配置字符串，如 "ctrl+shift+a"；无法识别的 keyCode 返回 nil
+    static func comboString(keyCode: UInt32, modifiers: UInt32) -> String? {
+        guard let keyName = keyCodeToName[keyCode] else { return nil }
+        let mods = modifierNameOrder.filter { modifiers & $0.1 != 0 }.map(\.0)
+        return (mods + [keyName]).joined(separator: "+")
+    }
+
+    private static let modifierNameOrder: [(String, UInt32)] = [
+        ("ctrl", UInt32(controlKey)),
+        ("alt", UInt32(optionKey)),
+        ("shift", UInt32(shiftKey)),
+        ("cmd", UInt32(cmdKey)),
+    ]
+
+    /// keyCodeTable 的反向映射，重复 keyCode 取规范名（跳过 enter/esc/backspace/d0–d9 等别名）
+    private static let keyCodeToName: [UInt32: String] = {
+        let aliases: Set<String> = ["enter", "esc", "backspace"]
+        var table: [UInt32: String] = [:]
+        for (name, code) in keyCodeTable where !aliases.contains(name) {
+            if name.hasPrefix("d"), name.count == 2, name.last?.isNumber == true { continue }
+            if table[code] == nil { table[code] = name }
+        }
+        return table
+    }()
+
     // MARK: - 展示
 
     private static let displayOrder: [(String, UInt32)] = [

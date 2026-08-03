@@ -2,11 +2,27 @@ import UserNotifications
 
 /// 用户通知封装：UNUserNotificationCenter 不可用时退化为 NSLog 打印
 enum Notify {
+    /// 点击状态栏菜单时 App 处于前台，系统默认不显示前台 App 的横幅，
+    /// 需在 delegate 中显式返回 .banner 才能弹出提示
+    private final class Delegate: NSObject, UNUserNotificationCenterDelegate {
+        func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                    willPresent notification: UNNotification,
+                                    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+            completionHandler([.banner, .sound])
+        }
+    }
+
+    private static let delegate = Delegate()
+
     /// 启动时请求一次通知授权
     static func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, error in
+        let center = UNUserNotificationCenter.current()
+        center.delegate = delegate
+        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
             if let error {
                 NSLog("[HotkeyManager] 通知授权失败：\(error.localizedDescription)")
+            } else if !granted {
+                NSLog("[HotkeyManager] 通知权限未授予，请到 系统设置 → 通知 → HotkeyManager 中开启")
             }
         }
     }
