@@ -13,6 +13,9 @@ final class HotkeyListWindowController: NSWindowController {
         let entryIndex: Int
     }
 
+    /// 窗口关闭回调：AppDelegate 借此释放窗口控制器，关闭后不常驻内存
+    var onWindowClose: (() -> Void)?
+
     private let configStore: ConfigStore
     private let recorder = HotkeyRecorder()
     private var config = AppConfig()
@@ -48,7 +51,7 @@ final class HotkeyListWindowController: NSWindowController {
     init(configStore: ConfigStore) {
         self.configStore = configStore
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 440),
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 360),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -82,13 +85,13 @@ final class HotkeyListWindowController: NSWindowController {
 
         let appColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("app"))
         appColumn.title = "应用"
-        appColumn.width = 180
+        appColumn.width = 150
         let bundleColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("bundleId"))
         bundleColumn.title = "Bundle ID"
-        bundleColumn.width = 230
+        bundleColumn.width = 200
         let keyColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("key"))
         keyColumn.title = "快捷键"
-        keyColumn.width = 110
+        keyColumn.width = 100
 
         tableView.addTableColumn(appColumn)
         tableView.addTableColumn(bundleColumn)
@@ -135,13 +138,38 @@ final class HotkeyListWindowController: NSWindowController {
     /// 应用名与图标由 bundleId 推导：运行中取实时信息，未运行从 .app 包推导
     private static func resolve(bundleId: String) -> (name: String, icon: NSImage?) {
         if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
-            return (app.localizedName ?? bundleId, app.icon)
+            return (app.localizedName ?? bundleId, downscaledIcon(app.icon))
         }
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
             let name = (FileManager.default.displayName(atPath: url.path) as NSString).deletingPathExtension
-            return (name.isEmpty ? bundleId : name, NSWorkspace.shared.icon(forFile: url.path))
+            return (name.isEmpty ? bundleId : name, downscaledIcon(NSWorkspace.shared.icon(forFile: url.path)))
         }
         return (bundleId, nil)
+    }
+
+    /// app.icon / icon(forFile:) 返回的 NSImage 最大带 1024×1024 位图（单张数 MB），
+    /// 而单元格里只显示 20pt。统一重绘为 40×40 px（20pt @2x）再交给行缓存，
+    /// 避免每条配置常驻一张全尺寸图标
+    private static func downscaledIcon(_ icon: NSImage?) -> NSImage? {
+        guard let icon else { return nil }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 40, pixelsHigh: 40,
+            bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        ) else { return icon }
+        rep.size = NSSize(width: 20, height: 20)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        // rep.size 为 20pt 时上下文按 2x 映射到 40px，这里要按点坐标绘制
+        icon.draw(in: NSRect(x: 0, y: 0, width: 20, height: 20),
+                  from: .zero, operation: .sourceOver, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        let scaled = NSImage(size: NSSize(width: 20, height: 20))
+        scaled.addRepresentation(rep)
+        return scaled
     }
 
     private func applyFilter() {
@@ -486,6 +514,7 @@ extension HotkeyListWindowController: NSWindowDelegate {
         if recorder.isRecording {
             recorder.cancel()
         }
+        onWindowClose?()
     }
 }
 

@@ -5,7 +5,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let configStore = ConfigStore()
     private var watcher: ConfigWatcher?
     private var statusBar: StatusBarController?
-    private lazy var hotkeyListWindow = HotkeyListWindowController(configStore: configStore)
+    /// 设置窗口按需创建、关闭即释放（含行内缓存的应用图标），不常驻内存
+    private var hotkeyListWindow: HotkeyListWindowController?
     private var config = AppConfig()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -18,7 +19,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.configStore.openInEditor()
             },
             onShowHotkeyList: { [weak self] in
-                self?.hotkeyListWindow.showWindow(nil)
+                guard let self else { return }
+                if self.hotkeyListWindow == nil {
+                    let controller = HotkeyListWindowController(configStore: self.configStore)
+                    controller.onWindowClose = { [weak self] in
+                        self?.hotkeyListWindow = nil
+                    }
+                    self.hotkeyListWindow = controller
+                }
+                self.hotkeyListWindow?.showWindow(nil)
             },
             onTogglePause: { paused in
                 if paused {
