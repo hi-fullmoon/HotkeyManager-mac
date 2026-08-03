@@ -1,6 +1,6 @@
 # HotkeyManager (macOS)
 
-macOS 全局热键工具（Windows 版 [HotkeyManager](../HotkeyManager) 的移植）：按一个快捷键切换任意应用的显示/隐藏。例如 `⌥1` 呼出微信，再按一次隐藏回去。
+macOS 全局热键工具（Windows 版 [HotkeyManager](../HotkeyManager) 的移植）：按一个快捷键切换任意应用的显示/隐藏。例如 `⌘1` 呼出微信，再按一次隐藏回去。
 
 纯 Swift + AppKit，Swift Package 构建，零第三方依赖。菜单栏运行，无 Dock 图标。
 
@@ -8,9 +8,10 @@ macOS 全局热键工具（Windows 版 [HotkeyManager](../HotkeyManager) 的移�
 
 - 任意数量的「热键 → 应用」映射，全部写在 `~/.hotkeymanager.json` 里
 - 应用未运行时自动按配置路径启动
-- 已运行未前台（含已隐藏）→ 还原并置前；已在前台 → 隐藏（或最小化窗口，可配）
+- 已运行未前台（含已隐藏）→ 还原并置前；已在前台 → 隐藏
 - 配置文件保存即热重载（300ms 防抖，解析失败保留旧热键并提示）
-- 菜单栏菜单：打开配置 / 重载 / 暂停热键 / 开关开机自启 / 退出
+- 「设置快捷键」图形窗口：点击录制快捷键、文件选择器添加应用、移除、拖拽排序，保存后自动生效
+- 菜单栏菜单：打开配置文件 / 设置快捷键 / 暂停快捷键 / 开关开机自启 / 退出
 
 ## 构建与运行
 
@@ -35,7 +36,7 @@ swift run
 ```json
 {
   "hotkeys": [
-    { "key": "alt+1", "bundleId": "com.tencent.xinWeChat" }
+    { "key": "cmd+1", "bundleId": "com.tencent.xinWeChat" }
   ]
 }
 ```

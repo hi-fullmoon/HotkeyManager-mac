@@ -88,11 +88,11 @@ final class ConfigStore {
     static let defaultTemplate = """
     {
       "hotkeys": [
-        { "key": "alt+1", "bundleId": "com.tencent.xinWeChat" },
-        { "key": "alt+2", "bundleId": "com.google.Chrome" },
-        { "key": "alt+3", "bundleId": "com.apple.Terminal" },
-        { "key": "alt+4", "bundleId": "com.microsoft.VSCode" },
-        { "key": "alt+5", "bundleId": "md.obsidian" }
+        { "key": "cmd+1", "bundleId": "com.tencent.xinWeChat" },
+        { "key": "cmd+2", "bundleId": "com.google.Chrome" },
+        { "key": "cmd+3", "bundleId": "com.apple.Terminal" },
+        { "key": "cmd+4", "bundleId": "com.microsoft.VSCode" },
+        { "key": "cmd+5", "bundleId": "md.obsidian" }
       ]
     }
     """
