@@ -23,16 +23,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onTogglePause: { paused in
                 if paused {
                     HotKeyManager.shared.suspend()
-                    Notify.send(title: "HotkeyManager", body: "热键已暂停")
+                    Notify.send(title: "HotkeyManager", body: "快捷键已暂停")
                 } else {
                     let failed = HotKeyManager.shared.resume()
                     if !failed.isEmpty {
                         Notify.send(
-                            title: "部分热键恢复失败",
+                            title: "部分快捷键恢复失败",
                             body: "可能被其他应用占用，请调整配置后重新保存。"
                         )
                     } else {
-                        Notify.send(title: "HotkeyManager", body: "热键已恢复")
+                        Notify.send(title: "HotkeyManager", body: "快捷键已恢复")
                     }
                 }
             }
@@ -52,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let newConfig = configStore.load() else {
             Notify.send(
                 title: "配置解析失败",
-                body: ".hotkeymanager.json 格式有误，已保留原有热键，请修正后重新保存。"
+                body: ".hotkeymanager.json 格式有误，已保留原有快捷键，请修正后重新保存。"
             )
             return
         }
@@ -77,8 +77,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !failed.isEmpty {
             Notify.send(
-                title: "部分热键注册失败",
-                body: "以下热键键名无效或已被占用：\(failed.joined(separator: "、"))"
+                title: "部分快捷键注册失败",
+                body: "以下快捷键键名无效或已被占用：\(failed.joined(separator: "、"))"
             )
         }
     }

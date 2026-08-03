@@ -66,7 +66,7 @@ final class StatusBarController: NSObject {
         menu.addItem(makeItem(title: "设置快捷键", action: #selector(showHotkeyListAction), key: "l"))
         menu.addItem(.separator())
 
-        pauseItem.title = "暂停热键"
+        pauseItem.title = "暂停快捷键"
         pauseItem.action = #selector(togglePauseAction)
         pauseItem.target = self
         menu.addItem(pauseItem)
@@ -94,7 +94,7 @@ final class StatusBarController: NSObject {
     /// 暂停 ⇄ 恢复：暂停时真正注销全部热键（对齐 Windows 版行为）
     @objc private func togglePauseAction() {
         isPaused.toggle()
-        pauseItem.title = isPaused ? "恢复热键" : "暂停热键"
+        pauseItem.title = isPaused ? "恢复快捷键" : "暂停快捷键"
         onTogglePause(isPaused)
     }
 
