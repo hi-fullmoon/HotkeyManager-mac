@@ -6,7 +6,6 @@ import UniformTypeIdentifiers
 final class HotkeyListWindowController: NSWindowController {
     private struct Row {
         let name: String
-        let bundleId: String
         let keyDisplay: String
         let icon: NSImage?
         /// 对应 config.hotkeys 的下标
@@ -51,7 +50,7 @@ final class HotkeyListWindowController: NSWindowController {
     init(configStore: ConfigStore) {
         self.configStore = configStore
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 304, height: 400),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -86,19 +85,22 @@ final class HotkeyListWindowController: NSWindowController {
         let appColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("app"))
         appColumn.title = "应用"
         appColumn.width = 150
-        let bundleColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("bundleId"))
-        bundleColumn.title = "Bundle ID"
-        bundleColumn.width = 200
         let keyColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("key"))
         keyColumn.title = "快捷键"
         keyColumn.width = 100
 
+        // 不允许用户拖动调列宽，但保留表格自动伸缩（配合 uniformColumnAutoresizingStyle 让列始终填满表格宽度）
+        for column in [appColumn, keyColumn] {
+            column.resizingMask = .autoresizingMask
+        }
+
         tableView.addTableColumn(appColumn)
-        tableView.addTableColumn(bundleColumn)
         tableView.addTableColumn(keyColumn)
         tableView.rowHeight = 26
         tableView.dataSource = self
         tableView.delegate = self
+        // 列随表格宽度等比伸缩，避免出现横向滚动或右侧空白
+        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
         // 行内拖拽排序
         tableView.registerForDraggedTypes([Self.rowDragType])
         tableView.draggingDestinationFeedbackStyle = .gap
@@ -106,6 +108,7 @@ final class HotkeyListWindowController: NSWindowController {
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
         scrollView.borderType = .bezelBorder
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -130,7 +133,7 @@ final class HotkeyListWindowController: NSWindowController {
         rows = config.hotkeys.enumerated().map { index, entry in
             let (name, icon) = Self.resolve(bundleId: entry.bundleId)
             let display = KeyCodeMap.parse(entry.key)?.display ?? (entry.key.isEmpty ? "未设置" : entry.key)
-            return Row(name: name, bundleId: entry.bundleId, keyDisplay: display, icon: icon, entryIndex: index)
+            return Row(name: name, keyDisplay: display, icon: icon, entryIndex: index)
         }
         applyFilter()
     }
@@ -428,8 +431,6 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
             let cell = cell as? NSTableCellView
             cell?.textField?.stringValue = item.name
             cell?.imageView?.image = item.icon
-        case "bundleId":
-            (cell as? NSTableCellView)?.textField?.stringValue = item.bundleId
         default:
             // 快捷键列：按钮形式，点击进入录制；录制中显示小号字体的提示文案
             if let button = cell.subviews.compactMap({ $0 as? NSButton }).first {
@@ -459,7 +460,9 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
             button.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(button)
             NSLayoutConstraint.activate([
+                // 撑满列宽：普通 / 录制中两种状态按钮宽度一致，不随文案变化
                 button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
+                button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
                 button.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             ])
             return container
