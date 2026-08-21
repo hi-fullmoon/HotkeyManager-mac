@@ -31,8 +31,7 @@ final class HotkeyListWindowController: NSWindowController {
     private var dragSourceEntryIndex: Int?
 
     private let tableView = NSTableView()
-    private let scrollView = VerticalOnlyScrollView()
-    private let clipView = VerticalOnlyClipView()
+    private let scrollView = NSScrollView()
     private let summaryLabel = NSTextField(labelWithString: "")
     private let emptyStateView = NSStackView()
 
@@ -151,14 +150,11 @@ final class HotkeyListWindowController: NSWindowController {
         tableView.registerForDraggedTypes([Self.rowDragType])
         tableView.draggingDestinationFeedbackStyle = .gap
 
-        // 隐藏横向 scroller 并不足以阻止触控板横移；自定义 clipView 从坐标层锁定 x = 0。
-        scrollView.contentView = clipView
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.scrollerStyle = .overlay
-        scrollView.horizontalScrollElasticity = .none
         scrollView.drawsBackground = true
 
         let emptyIcon = NSImageView()
@@ -306,11 +302,6 @@ final class HotkeyListWindowController: NSWindowController {
             appColumn.width = max(appColumn.minWidth, availableWidth - keyWidth)
         }
 
-        let origin = scrollView.contentView.bounds.origin
-        if origin.x != 0 {
-            scrollView.contentView.scroll(to: NSPoint(x: 0, y: origin.y))
-            scrollView.reflectScrolledClipView(scrollView.contentView)
-        }
     }
 
     /// 组合键与其他条目的 keyCode + 修饰键是否冲突（excluding 为编辑中的条目下标）
@@ -690,35 +681,5 @@ extension HotkeyListWindowController: NSWindowDelegate {
 private final class DragSnapshotTextField: NSTextField {
     override func makeBackingLayer() -> CALayer {
         CALayer()
-    }
-}
-
-/// 只允许纵向滚动。NSScrollView 即使隐藏横向滚动条，默认仍会响应触控板横移。
-private final class VerticalOnlyClipView: NSClipView {
-    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
-        var bounds = super.constrainBoundsRect(proposedBounds)
-        bounds.origin.x = 0
-        return bounds
-    }
-}
-
-/// 从事件入口忽略纯横向滚动；clipView 的坐标约束作为第二层保护，
-/// 避免触控板惯性或 AppKit 的弹性滚动让表格产生短暂横移。
-private final class VerticalOnlyScrollView: NSScrollView {
-    override func scrollWheel(with event: NSEvent) {
-        guard event.scrollingDeltaY != 0 else {
-            lockHorizontalOrigin()
-            return
-        }
-
-        super.scrollWheel(with: event)
-        lockHorizontalOrigin()
-    }
-
-    private func lockHorizontalOrigin() {
-        let origin = contentView.bounds.origin
-        guard origin.x != 0 else { return }
-        contentView.scroll(to: NSPoint(x: 0, y: origin.y))
-        reflectScrolledClipView(contentView)
     }
 }
