@@ -78,7 +78,11 @@ final class HotkeyRecorder {
                 Notify.send(title: "部分快捷键恢复失败", body: "快捷键可能被系统保留或其他应用独占，请换一个组合键。")
             }
         }
-        onFinish?(result)
+        // 回调只服务于本次录制；及时释放其捕获的行索引和窗口上下文。
+        let completion = onFinish
+        onFinish = nil
+        onUnrecognized = nil
+        completion?(result)
     }
 
     /// NSEvent 修饰键 → Carbon 修饰键位掩码

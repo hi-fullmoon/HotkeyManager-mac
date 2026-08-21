@@ -106,6 +106,7 @@ final class ConfigWatcher {
     private let onChange: () -> Void
     private var source: DispatchSourceFileSystemObject?
     private var debounceItem: DispatchWorkItem?
+    private var retryItem: DispatchWorkItem?
 
     init(fileURL: URL, onChange: @escaping () -> Void) {
         self.fileURL = fileURL
@@ -113,18 +114,39 @@ final class ConfigWatcher {
     }
 
     func start() {
+        guard source == nil, retryItem == nil else { return }
         openAndWatch()
+    }
+
+    func stop() {
+        debounceItem?.cancel()
+        debounceItem = nil
+        retryItem?.cancel()
+        retryItem = nil
+        source?.cancel()
+        source = nil
+    }
+
+    deinit {
+        stop()
     }
 
     private func openAndWatch() {
         let fd = open(fileURL.path, O_EVTONLY)
         guard fd >= 0 else {
             // 文件暂时不存在（原子保存的间隙），稍后重试
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.openAndWatch()
+            retryItem?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.retryItem = nil
+                self.openAndWatch()
             }
+            retryItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
             return
         }
+        retryItem?.cancel()
+        retryItem = nil
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd,
             eventMask: [.write, .delete, .rename, .revoke],
@@ -149,7 +171,9 @@ final class ConfigWatcher {
         // 300ms 防抖：连续多次保存只触发一次重载
         debounceItem?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            self?.onChange()
+            guard let self else { return }
+            self.debounceItem = nil
+            self.onChange()
         }
         debounceItem = item
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)

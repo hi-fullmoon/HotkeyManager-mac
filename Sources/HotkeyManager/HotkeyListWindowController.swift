@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// 快捷键列内点击按钮即可重新录制；表格下方 + / - 按钮添加 / 移除条目；支持拖拽排序
 final class HotkeyListWindowController: NSWindowController {
     private struct Row {
+        let bundleId: String
         let name: String
         let keyDisplay: String
         let icon: NSImage?
@@ -19,7 +20,6 @@ final class HotkeyListWindowController: NSWindowController {
     private let recorder = HotkeyRecorder()
     private var config = AppConfig()
     private var rows: [Row] = []
-    private var visibleRows: [Row] = []
 
     /// 正在录制的 config.hotkeys 下标，nil 表示未在录制
     private var recordingIndex: Int?
@@ -226,18 +226,48 @@ final class HotkeyListWindowController: NSWindowController {
     }
 
     private func apply(_ loaded: AppConfig) {
+        // 配置热重载通常只改变快捷键或顺序；复用现有名称和已缩放图标，
+        // 避免每次保存都重新解码应用的大尺寸图标。
+        var cachedRows: [String: Row] = [:]
+        for row in rows {
+            cachedRows[row.bundleId] = row
+        }
+        var runningApps: [String: NSRunningApplication] = [:]
+        for app in NSWorkspace.shared.runningApplications {
+            if let bundleId = app.bundleIdentifier {
+                runningApps[bundleId] = app
+            }
+        }
+
         config = loaded
         rows = config.hotkeys.enumerated().map { index, entry in
-            let (name, icon) = Self.resolve(bundleId: entry.bundleId)
+            let resolved = cachedRows[entry.bundleId].map { ($0.name, $0.icon) }
+                ?? Self.resolve(bundleId: entry.bundleId, runningApps: runningApps)
             let display = KeyCodeMap.parse(entry.key)?.display ?? (entry.key.isEmpty ? "未设置" : entry.key)
-            return Row(name: name, keyDisplay: display, icon: icon, entryIndex: index)
+            return Row(
+                bundleId: entry.bundleId,
+                name: resolved.0,
+                keyDisplay: display,
+                icon: resolved.1,
+                entryIndex: index
+            )
         }
-        applyFilter()
+        tableView.reloadData()
+        updateUIState()
     }
 
     /// 应用名与图标由 bundleId 推导：运行中取实时信息，未运行从 .app 包推导
-    private static func resolve(bundleId: String) -> (name: String, icon: NSImage?) {
-        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId }) {
+    private static func resolve(
+        bundleId: String,
+        runningApps: [String: NSRunningApplication]? = nil
+    ) -> (name: String, icon: NSImage?) {
+        let app: NSRunningApplication?
+        if let runningApps {
+            app = runningApps[bundleId]
+        } else {
+            app = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == bundleId })
+        }
+        if let app {
             return (app.localizedName ?? bundleId, downscaledIcon(app.icon))
         }
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
@@ -272,14 +302,8 @@ final class HotkeyListWindowController: NSWindowController {
         return scaled
     }
 
-    private func applyFilter() {
-        visibleRows = rows
-        tableView.reloadData()
-        updateUIState()
-    }
-
     private func updateUIState() {
-        let count = visibleRows.count
+        let count = rows.count
         emptyStateView.isHidden = count != 0
         summaryLabel.stringValue = count == 0 ? "尚未添加应用" : "\(count) 个应用 · 拖拽可排序"
         let selectedRow = tableView.selectedRow
@@ -315,7 +339,7 @@ final class HotkeyListWindowController: NSWindowController {
     }
 
     private func selectEntry(bundleId: String) {
-        guard let row = visibleRows.firstIndex(where: {
+        guard let row = rows.firstIndex(where: {
             config.hotkeys.indices.contains($0.entryIndex)
                 && config.hotkeys[$0.entryIndex].bundleId == bundleId
         }) else { return }
@@ -325,7 +349,7 @@ final class HotkeyListWindowController: NSWindowController {
 
     /// 只刷新某行的快捷键列（录制开始/结束时切换按钮文案）
     private func refreshKeyCell(_ entryIndex: Int) {
-        guard let row = visibleRows.firstIndex(where: { $0.entryIndex == entryIndex }),
+        guard let row = rows.firstIndex(where: { $0.entryIndex == entryIndex }),
               let column = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == "key" }) else { return }
         tableView.reloadData(forRowIndexes: IndexSet(integer: row), columnIndexes: IndexSet(integer: column))
     }
@@ -341,7 +365,7 @@ final class HotkeyListWindowController: NSWindowController {
         }
         if wasRecordingThis { return }
 
-        if let row = visibleRows.firstIndex(where: { $0.entryIndex == entryIndex }) {
+        if let row = rows.firstIndex(where: { $0.entryIndex == entryIndex }) {
             tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
         startRecording(entryIndex: entryIndex)
@@ -449,8 +473,8 @@ final class HotkeyListWindowController: NSWindowController {
     /// - ：确认后移除选中条目的快捷键
     @objc private func removeButtonClicked() {
         let row = tableView.selectedRow
-        guard row >= 0, row < visibleRows.count, let window else { return }
-        let item = visibleRows[row]
+        guard row >= 0, row < rows.count, let window else { return }
+        let item = rows[row]
         guard config.hotkeys.indices.contains(item.entryIndex) else { return }
         let bundleId = config.hotkeys[item.entryIndex].bundleId
 
@@ -481,7 +505,7 @@ final class HotkeyListWindowController: NSWindowController {
 
 extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int {
-        visibleRows.count
+        rows.count
     }
 
     /// 显式提供行高：.gap 拖拽反馈需要 delegate 方法，仅设置 rowHeight 属性会导致拖拽时行抖动
@@ -491,10 +515,10 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
 
     /// 拖拽起点：把条目的 config.hotkeys 下标写入粘贴板
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-        guard row < visibleRows.count else { return nil }
-        dragSourceEntryIndex = visibleRows[row].entryIndex
+        guard row < rows.count else { return nil }
+        dragSourceEntryIndex = rows[row].entryIndex
         let item = NSPasteboardItem()
-        item.setString(String(visibleRows[row].entryIndex), forType: Self.rowDragType)
+        item.setString(String(rows[row].entryIndex), forType: Self.rowDragType)
         return item
     }
 
@@ -521,7 +545,7 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
             tableView.setDropRow(row, dropOperation: .above)
         }
         if let from = dragSourceEntryIndex {
-            let to = row < visibleRows.count ? visibleRows[row].entryIndex : config.hotkeys.count
+            let to = row < rows.count ? rows[row].entryIndex : config.hotkeys.count
             if to == from || to == from + 1 { return [] }
         }
         return .move
@@ -534,12 +558,12 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
               from < config.hotkeys.count else { return false }
         dragSourceEntryIndex = nil
         let sourceBundleId = config.hotkeys[from].bundleId
-        let targetBundleId: String? = row < visibleRows.count
-            ? config.hotkeys[visibleRows[row].entryIndex].bundleId
+        let targetBundleId: String? = row < rows.count
+            ? config.hotkeys[rows[row].entryIndex].bundleId
             : nil
 
         // 落回原地：不改动、不保存
-        let toInOriginal = row < visibleRows.count ? visibleRows[row].entryIndex : config.hotkeys.count
+        let toInOriginal = row < rows.count ? rows[row].entryIndex : config.hotkeys.count
         guard toInOriginal != from, toInOriginal != from + 1 else { return false }
 
         // 顺序变化会使录制中的条目下标失效，先取消录制
@@ -571,8 +595,8 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let identifier = tableColumn?.identifier, row < visibleRows.count else { return nil }
-        let item = visibleRows[row]
+        guard let identifier = tableColumn?.identifier, row < rows.count else { return nil }
+        let item = rows[row]
         let cell = tableView.makeView(withIdentifier: identifier, owner: self)
             ?? makeCell(identifier: identifier)
         switch identifier.rawValue {
