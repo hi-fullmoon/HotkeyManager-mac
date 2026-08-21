@@ -1,6 +1,7 @@
 import AppKit
 
 /// 组装根：加载配置、注册热键、连接菜单与热重载
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let configStore = ConfigStore()
     private var watcher: ConfigWatcher?
@@ -38,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if !failed.isEmpty {
                         Notify.send(
                             title: "部分快捷键恢复失败",
-                            body: "可能被其他应用占用，请调整配置后重新保存。"
+                            body: "可能被系统保留或其他应用独占，请调整配置后重新保存。"
                         )
                     } else {
                         Notify.send(title: "HotkeyManager", body: "快捷键已恢复")
@@ -51,9 +52,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // 配置文件保存即热重载
         watcher = ConfigWatcher(fileURL: configStore.fileURL) { [weak self] in
-            self?.reloadConfig()
+            self?.configurationFileDidChange()
         }
         watcher?.start()
+    }
+
+    /// 同一份配置同时驱动全局快捷键和已打开的设置窗口，避免窗口保留旧副本后覆盖外部修改。
+    private func configurationFileDidChange() {
+        reloadConfig()
+        hotkeyListWindow?.reloadFromDisk()
     }
 
     /// 重新解析配置并全量重注册热键；解析失败保留旧热键并提示
@@ -87,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !failed.isEmpty {
             Notify.send(
                 title: "部分快捷键注册失败",
-                body: "以下快捷键键名无效或已被占用：\(failed.joined(separator: "、"))"
+                body: "以下快捷键键名无效、被系统保留或已被独占：\(failed.joined(separator: "、"))"
             )
         }
     }

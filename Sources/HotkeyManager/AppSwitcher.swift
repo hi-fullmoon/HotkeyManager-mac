@@ -4,6 +4,25 @@ import ApplicationServices
 /// 切换引擎，语义对齐 Windows 版 WindowService.ToggleCore：
 /// 未运行 → 启动；已运行非前台（含已隐藏）→ unhide + 置前；已在前台 → 隐藏
 enum AppSwitcher {
+    private static let forceRestoreDefaultsKey = "ForceRestoreMinimizedWindows"
+
+    static var isForceRestoreEnabled: Bool {
+        UserDefaults.standard.bool(forKey: forceRestoreDefaultsKey)
+    }
+
+    static var isAccessibilityTrusted: Bool {
+        AXIsProcessTrusted()
+    }
+
+    /// 开启时主动请求一次辅助功能权限；未授权期间仍会走普通 reopen，不影响应用激活。
+    @discardableResult
+    static func setForceRestoreEnabled(_ enabled: Bool) -> Bool {
+        UserDefaults.standard.set(enabled, forKey: forceRestoreDefaultsKey)
+        guard enabled, !AXIsProcessTrusted() else { return AXIsProcessTrusted() }
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
     static func toggle(_ entry: HotkeyEntry) {
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == entry.bundleId
@@ -16,13 +35,25 @@ enum AppSwitcher {
         if !app.isActive {
             // 已运行但非前台（含已隐藏、窗口已最小化）→ 还原并置前
             app.unhide()
-            unminimize(app: app)          // 已授权辅助功能时立即还原最小化窗口
+            unminimizeIfEnabled(app: app)
             activateWithReopen(entry, fallback: app)  // 等价点击 Dock 图标：置前 + 系统还原最小化窗口
             return
         }
 
         // 已在前台 → 隐藏
         app.hide()
+    }
+
+    /// 用户主动开启且已授权时，通过 AX 可靠地还原目标应用的全部最小化窗口。
+    private static func unminimizeIfEnabled(app: NSRunningApplication) {
+        guard isForceRestoreEnabled, AXIsProcessTrusted() else { return }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &value) == .success,
+              let windows = value as? [AXUIElement] else { return }
+        for window in windows {
+            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        }
     }
 
     private static func launch(_ entry: HotkeyEntry) {
@@ -64,33 +95,6 @@ enum AppSwitcher {
                     app.activate(options: [.activateIgnoringOtherApps])
                 }
             }
-        }
-    }
-
-    /// 本次运行是否已引导过辅助功能授权（避免每次按快捷键都弹系统提示）
-    private static var axPermissionPrompted = false
-
-    /// 还原目标应用被最小化的窗口（AX AXMinimized = false）。
-    /// 未授权辅助功能时，首次弹系统授权引导 + 通知提示，之后静默跳过
-    ///（不影响 activate 置前，只是窗口仍停在 Dock）
-    private static func unminimize(app: NSRunningApplication) {
-        guard AXIsProcessTrusted() else {
-            guard !axPermissionPrompted else { return }
-            axPermissionPrompted = true
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-            _ = AXIsProcessTrustedWithOptions(options)
-            Notify.send(
-                title: "需要辅助功能权限",
-                body: "还原最小化窗口需要辅助功能权限。请在 系统设置 → 隐私与安全性 → 辅助功能 中授权 HotkeyManager，授权后再按一次快捷键即可。"
-            )
-            return
-        }
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &value) == .success,
-              let windows = value as? [AXUIElement] else { return }
-        for window in windows {
-            AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
         }
     }
 

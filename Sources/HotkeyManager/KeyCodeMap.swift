@@ -14,11 +14,16 @@ enum KeyCodeMap {
     /// 解析 "cmd+1"、"ctrl+alt+a" 形式的组合键：最后一段为按键，其余为修饰键。
     /// 按键名无效时返回 nil。
     static func parse(_ combo: String) -> KeyCombo? {
-        let parts = combo.split(separator: "+")
-            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
-            .filter { !$0.isEmpty }
+        let parts = combo.components(separatedBy: "+")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        // 空片段（如 "cmd++1"）和未知修饰键都应视为配置错误，不能静默降级成裸按键。
+        guard !parts.isEmpty, parts.allSatisfy({ !$0.isEmpty }) else { return nil }
         guard let keyName = parts.last, let keyCode = keyCodeTable[keyName] else { return nil }
-        let modifiers = parts.dropLast().reduce(UInt32(0)) { $0 | (modifierMap[$1] ?? 0) }
+        let modifierNames = parts.dropLast()
+        guard modifierNames.allSatisfy({ modifierMap[$0] != nil }) else { return nil }
+        let modifiers = modifierNames.reduce(UInt32(0)) { $0 | modifierMap[$1]! }
+        // 普通裸按键会劫持正常输入；仅功能键允许不带修饰键独立注册。
+        guard modifiers != 0 || unmodifiedKeyNames.contains(keyName) else { return nil }
         return KeyCombo(
             keyCode: keyCode,
             modifiers: modifiers,
@@ -82,13 +87,16 @@ enum KeyCodeMap {
         "win":     UInt32(cmdKey), // Windows 版的 Win 键习惯映射到 Cmd
     ]
 
+    private static let unmodifiedKeyNames = Set((1...15).map { "f\($0)" })
+
     // MARK: - keyCode → 键名（录制快捷键用）
 
     /// 由 keyCode + Carbon 修饰键生成配置字符串，如 "ctrl+shift+a"；无法识别的 keyCode 返回 nil
     static func comboString(keyCode: UInt32, modifiers: UInt32) -> String? {
         guard let keyName = keyCodeToName[keyCode] else { return nil }
         let mods = modifierNameOrder.filter { modifiers & $0.1 != 0 }.map(\.0)
-        return (mods + [keyName]).joined(separator: "+")
+        let combo = (mods + [keyName]).joined(separator: "+")
+        return parse(combo) == nil ? nil : combo
     }
 
     private static let modifierNameOrder: [(String, UInt32)] = [

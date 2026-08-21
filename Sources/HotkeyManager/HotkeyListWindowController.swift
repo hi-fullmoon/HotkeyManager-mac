@@ -31,31 +31,41 @@ final class HotkeyListWindowController: NSWindowController {
     private var dragSourceEntryIndex: Int?
 
     private let tableView = NSTableView()
+    private let scrollView = VerticalOnlyScrollView()
+    private let clipView = VerticalOnlyClipView()
+    private let summaryLabel = NSTextField(labelWithString: "")
+    private let emptyStateView = NSStackView()
 
-    /// 表格下方的 + / - 分段控件（对齐 macOS 系统列表样式）
-    private lazy var addRemoveControl: NSSegmentedControl = {
-        let plus = NSImage(systemSymbolName: "plus", accessibilityDescription: "添加快捷键")
-        let minus = NSImage(systemSymbolName: "minus", accessibilityDescription: "移除快捷键")
-        let control = NSSegmentedControl(
-            images: [plus, minus].compactMap { $0 },
-            trackingMode: .momentary,
-            target: self,
-            action: #selector(addRemoveClicked(_:))
-        )
-        control.segmentStyle = .smallSquare
-        control.setEnabled(false, forSegment: 1) // 未选中行时 - 不可用
-        return control
+    private lazy var addButton: NSButton = {
+        let button = NSButton(title: "添加应用…", target: self, action: #selector(addButtonClicked))
+        button.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .rounded
+        button.controlSize = .regular
+        return button
+    }()
+
+    private lazy var removeButton: NSButton = {
+        let button = NSButton(title: "移除", target: self, action: #selector(removeButtonClicked))
+        button.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.bezelStyle = .rounded
+        button.controlSize = .regular
+        button.isEnabled = false
+        return button
     }()
 
     init(configStore: ConfigStore) {
         self.configStore = configStore
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 304, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 480),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "设置快捷键"
+        window.subtitle = "HotkeyManager"
+        window.tabbingMode = .disallowed
         window.center()
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -77,59 +87,150 @@ final class HotkeyListWindowController: NSWindowController {
         window?.makeKeyAndOrderFront(sender)
     }
 
+    /// 配置文件被外部编辑或本窗口保存后，同步刷新当前窗口。
+    func reloadFromDisk() {
+        guard let loaded = configStore.load(), loaded != config else { return }
+        if recorder.isRecording { recorder.cancel() }
+        apply(loaded)
+    }
+
     // MARK: - UI
 
     private func buildUI() {
         guard let contentView = window?.contentView else { return }
 
+        let headerIcon = NSImageView()
+        headerIcon.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "快捷键")
+        headerIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+        headerIcon.contentTintColor = .controlAccentColor
+
+        let titleLabel = NSTextField(labelWithString: "用快捷键快速切换应用")
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+
+        let descriptionLabel = NSTextField(labelWithString: "点击右侧按钮录制快捷键，拖拽应用可调整顺序。")
+        descriptionLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        descriptionLabel.textColor = .secondaryLabelColor
+
+        let headerText = NSStackView(views: [titleLabel, descriptionLabel])
+        headerText.orientation = .vertical
+        headerText.alignment = .leading
+        headerText.spacing = 3
+
+        let header = NSStackView(views: [headerIcon, headerText])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 12
+        header.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(header)
+
         let appColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("app"))
         appColumn.title = "应用"
-        appColumn.width = 150
+        appColumn.width = 260
+        appColumn.minWidth = 180
         let keyColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("key"))
         keyColumn.title = "快捷键"
-        keyColumn.width = 100
+        keyColumn.width = 126
+        keyColumn.minWidth = 112
+        keyColumn.maxWidth = 160
 
-        // 不允许用户拖动调列宽，但保留表格自动伸缩（配合 uniformColumnAutoresizingStyle 让列始终填满表格宽度）
-        for column in [appColumn, keyColumn] {
-            column.resizingMask = .autoresizingMask
-        }
+        // 应用列吸收宽度变化，快捷键列保持稳定，确保最小窗口下按钮仍完整可见。
+        appColumn.resizingMask = .autoresizingMask
+        keyColumn.resizingMask = []
 
         tableView.addTableColumn(appColumn)
         tableView.addTableColumn(keyColumn)
-        tableView.rowHeight = 26
+        tableView.rowHeight = 34
+        tableView.intercellSpacing = NSSize(width: 8, height: 2)
+        tableView.style = .inset
+        tableView.usesAlternatingRowBackgroundColors = true
         tableView.dataSource = self
         tableView.delegate = self
-        // 列随表格宽度等比伸缩，避免出现横向滚动或右侧空白
-        tableView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        tableView.autoresizingMask = [.width]
         // 行内拖拽排序
         tableView.registerForDraggedTypes([Self.rowDragType])
         tableView.draggingDestinationFeedbackStyle = .gap
 
-        let scrollView = NSScrollView()
+        // 隐藏横向 scroller 并不足以阻止触控板横移；自定义 clipView 从坐标层锁定 x = 0。
+        scrollView.contentView = clipView
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
-        scrollView.borderType = .bezelBorder
+        scrollView.borderType = .noBorder
+        scrollView.scrollerStyle = .overlay
+        scrollView.horizontalScrollElasticity = .none
+        scrollView.drawsBackground = true
+
+        let emptyIcon = NSImageView()
+        emptyIcon.image = NSImage(systemSymbolName: "keyboard.badge.ellipsis", accessibilityDescription: nil)
+        emptyIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 32, weight: .regular)
+        emptyIcon.contentTintColor = .tertiaryLabelColor
+        let emptyTitle = NSTextField(labelWithString: "还没有应用快捷键")
+        emptyTitle.font = .systemFont(ofSize: 15, weight: .medium)
+        let emptyDescription = NSTextField(labelWithString: "点击“添加应用…”开始设置")
+        emptyDescription.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        emptyDescription.textColor = .secondaryLabelColor
+        emptyStateView.setViews([emptyIcon, emptyTitle, emptyDescription], in: .top)
+        emptyStateView.orientation = .vertical
+        emptyStateView.alignment = .centerX
+        emptyStateView.spacing = 6
+
+        summaryLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        summaryLabel.textColor = .secondaryLabelColor
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(scrollView)
-        addRemoveControl.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(addRemoveControl)
+        emptyStateView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(emptyStateView)
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        removeButton.translatesAutoresizingMaskIntoConstraints = false
+        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(addButton)
+        contentView.addSubview(removeButton)
+        contentView.addSubview(summaryLabel)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            header.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
+            header.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
+            headerIcon.widthAnchor.constraint(equalToConstant: 34),
+            headerIcon.heightAnchor.constraint(equalToConstant: 34),
 
-            addRemoveControl.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 4),
-            addRemoveControl.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            addRemoveControl.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+
+            emptyStateView.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            emptyStateView.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor, constant: 10),
+            emptyStateView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 20),
+            emptyStateView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -20),
+
+            addButton.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 12),
+            addButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            addButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
+
+            removeButton.leadingAnchor.constraint(equalTo: addButton.trailingAnchor, constant: 8),
+            removeButton.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
+
+            summaryLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            summaryLabel.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
+            summaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: removeButton.trailingAnchor, constant: 12),
         ])
+
+        DispatchQueue.main.async { [weak self] in
+            self?.fitTableToVisibleWidth()
+        }
     }
 
     // MARK: - 数据
 
     private func reload() {
-        config = configStore.load() ?? AppConfig()
+        // 临时的无效 JSON 不应把窗口清空；保持最后一次有效配置，等待下一次文件事件。
+        guard let loaded = configStore.load() else { return }
+        apply(loaded)
+    }
+
+    private func apply(_ loaded: AppConfig) {
+        config = loaded
         rows = config.hotkeys.enumerated().map { index, entry in
             let (name, icon) = Self.resolve(bundleId: entry.bundleId)
             let display = KeyCodeMap.parse(entry.key)?.display ?? (entry.key.isEmpty ? "未设置" : entry.key)
@@ -178,16 +279,57 @@ final class HotkeyListWindowController: NSWindowController {
     private func applyFilter() {
         visibleRows = rows
         tableView.reloadData()
+        updateUIState()
+    }
+
+    private func updateUIState() {
+        let count = visibleRows.count
+        emptyStateView.isHidden = count != 0
+        summaryLabel.stringValue = count == 0 ? "尚未添加应用" : "\(count) 个应用 · 拖拽可排序"
+        let selectedRow = tableView.selectedRow
+        removeButton.isEnabled = selectedRow >= 0 && selectedRow < count
+    }
+
+    private func fitTableToVisibleWidth() {
+        let visibleWidth = scrollView.contentView.bounds.width
+        guard visibleWidth > 0 else { return }
+        var frame = tableView.frame
+        frame.size.width = visibleWidth
+        tableView.frame = frame
+
+        if let appColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("app")),
+           let keyColumn = tableView.tableColumn(withIdentifier: NSUserInterfaceItemIdentifier("key")) {
+            // .inset 样式会在最后一列之外保留绘制区域；额外留出 8pt，避免按钮圆角被 clipView 裁切。
+            let availableWidth = visibleWidth - tableView.intercellSpacing.width - 8
+            let keyWidth = min(126, max(keyColumn.minWidth, availableWidth * 0.34))
+            keyColumn.width = keyWidth
+            appColumn.width = max(appColumn.minWidth, availableWidth - keyWidth)
+        }
+
+        let origin = scrollView.contentView.bounds.origin
+        if origin.x != 0 {
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: origin.y))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
     }
 
     /// 组合键与其他条目的 keyCode + 修饰键是否冲突（excluding 为编辑中的条目下标）
-    private func hasKeyConflict(_ combo: String, excluding index: Int?) -> Bool {
+    private func hasKeyConflict(_ combo: String, in candidate: AppConfig, excluding index: Int?) -> Bool {
         guard let newCombo = KeyCodeMap.parse(combo) else { return false }
-        return config.hotkeys.enumerated().contains { i, entry in
+        return candidate.hotkeys.enumerated().contains { i, entry in
             if let index, i == index { return false }
             guard let existing = KeyCodeMap.parse(entry.key) else { return false }
             return existing.keyCode == newCombo.keyCode && existing.modifiers == newCombo.modifiers
         }
+    }
+
+    private func selectEntry(bundleId: String) {
+        guard let row = visibleRows.firstIndex(where: {
+            config.hotkeys.indices.contains($0.entryIndex)
+                && config.hotkeys[$0.entryIndex].bundleId == bundleId
+        }) else { return }
+        tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        tableView.scrollRowToVisible(row)
     }
 
     /// 只刷新某行的快捷键列（录制开始/结束时切换按钮文案）
@@ -220,7 +362,10 @@ final class HotkeyListWindowController: NSWindowController {
         recordingIndex = entryIndex
         refreshKeyCell(entryIndex)
 
-        recorder.onUnrecognized = { /* 按键无法识别：继续等待下一次按键 */ }
+        recorder.onUnrecognized = {
+            // 普通按键必须配合修饰键，给出轻量反馈并继续等待下一次按键。
+            NSSound.beep()
+        }
         recorder.onFinish = { [weak self] combo in
             guard let self else { return }
             self.recordingIndex = nil
@@ -233,17 +378,24 @@ final class HotkeyListWindowController: NSWindowController {
 
     private func applyRecorded(_ combo: String, to entryIndex: Int) {
         guard entryIndex < config.hotkeys.count else { return }
+        let targetBundleId = config.hotkeys[entryIndex].bundleId
+        guard var updated = configStore.load(),
+              let latestIndex = updated.hotkeys.firstIndex(where: { $0.bundleId == targetBundleId }) else {
+            Notify.send(title: "配置已变化", body: "目标应用已被外部移除，请重新操作。")
+            reload()
+            return
+        }
 
-        if hasKeyConflict(combo, excluding: entryIndex) {
+        if hasKeyConflict(combo, in: updated, excluding: latestIndex) {
             let display = KeyCodeMap.parse(combo)?.display ?? combo
             Notify.send(title: "快捷键冲突", body: "\(display) 已被其他条目占用，请换一个")
             return
         }
 
-        config.hotkeys[entryIndex].key = combo
-        let entry = config.hotkeys[entryIndex]
+        updated.hotkeys[latestIndex].key = combo
+        let entry = updated.hotkeys[latestIndex]
         let display = KeyCodeMap.parse(combo)?.display ?? combo
-        guard configStore.save(config) else {
+        guard configStore.save(updated) else {
             Notify.send(title: "HotkeyManager", body: "保存配置失败，详见日志")
             return
         }
@@ -251,24 +403,12 @@ final class HotkeyListWindowController: NSWindowController {
         // 保存后 ConfigWatcher 会自动热重载热键
         Notify.send(title: "HotkeyManager", body: "「\(Self.resolve(bundleId: entry.bundleId).name)」快捷键已更新为 \(display)")
         reload()
-        // 重新选中刚才的条目
-        if let row = visibleRows.firstIndex(where: { $0.entryIndex == entryIndex }) {
-            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        }
+        selectEntry(bundleId: targetBundleId)
     }
 
     // MARK: - 添加 / 移除
 
-    /// + / - 分段控件：0 = 添加，1 = 移除
-    @objc private func addRemoveClicked(_ sender: NSSegmentedControl) {
-        if sender.selectedSegment == 0 {
-            addButtonClicked()
-        } else {
-            removeButtonClicked()
-        }
-    }
-
-    /// + ：系统文件选择器选择 .app，读取 bundleId 后新增一行（快捷键留空，点击「未设置」录制）
+    /// 系统文件选择器选择 .app，读取 bundleId 后新增一行（快捷键留空，点击「未设置」录制）
     @objc private func addButtonClicked() {
         guard let window else { return }
         let panel = NSOpenPanel()
@@ -291,29 +431,28 @@ final class HotkeyListWindowController: NSWindowController {
             return
         }
 
-        // 已存在相同 bundleId 的条目：选中它而不是重复添加
-        if let existing = config.hotkeys.firstIndex(where: { $0.bundleId == bundleId }) {
-            if let row = visibleRows.firstIndex(where: { $0.entryIndex == existing }) {
-                tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-                tableView.scrollRowToVisible(row)
-            }
+        guard var updated = configStore.load() else {
+            Notify.send(title: "HotkeyManager", body: "配置文件当前不可读，请修正后重试")
+            return
+        }
+
+        // 已存在相同 bundleId 的条目：刷新并选中它，而不是重复添加。
+        if updated.hotkeys.contains(where: { $0.bundleId == bundleId }) {
+            reload()
+            selectEntry(bundleId: bundleId)
             return
         }
 
         var entry = HotkeyEntry()
         entry.bundleId = bundleId
-        config.hotkeys.append(entry)
-        guard configStore.save(config) else {
+        updated.hotkeys.append(entry)
+        guard configStore.save(updated) else {
             Notify.send(title: "HotkeyManager", body: "保存配置失败，详见日志")
             return
         }
 
-        let newIndex = config.hotkeys.count - 1
         reload()
-        if let row = visibleRows.firstIndex(where: { $0.entryIndex == newIndex }) {
-            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            tableView.scrollRowToVisible(row)
-        }
+        selectEntry(bundleId: bundleId)
     }
 
     /// - ：确认后移除选中条目的快捷键
@@ -321,6 +460,8 @@ final class HotkeyListWindowController: NSWindowController {
         let row = tableView.selectedRow
         guard row >= 0, row < visibleRows.count, let window else { return }
         let item = visibleRows[row]
+        guard config.hotkeys.indices.contains(item.entryIndex) else { return }
+        let bundleId = config.hotkeys[item.entryIndex].bundleId
 
         let alert = NSAlert()
         alert.messageText = "移除快捷键？"
@@ -329,8 +470,13 @@ final class HotkeyListWindowController: NSWindowController {
         alert.addButton(withTitle: "取消")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
-            self.config.hotkeys.remove(at: item.entryIndex)
-            guard self.configStore.save(self.config) else {
+            guard var updated = self.configStore.load(),
+                  let latestIndex = updated.hotkeys.firstIndex(where: { $0.bundleId == bundleId }) else {
+                self.reload()
+                return
+            }
+            updated.hotkeys.remove(at: latestIndex)
+            guard self.configStore.save(updated) else {
                 Notify.send(title: "HotkeyManager", body: "保存配置失败，详见日志")
                 return
             }
@@ -349,7 +495,7 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
 
     /// 显式提供行高：.gap 拖拽反馈需要 delegate 方法，仅设置 rowHeight 属性会导致拖拽时行抖动
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        26
+        34
     }
 
     /// 拖拽起点：把条目的 config.hotkeys 下标写入粘贴板
@@ -396,6 +542,10 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
               let from = pasteboardItem.string(forType: Self.rowDragType).flatMap(Int.init),
               from < config.hotkeys.count else { return false }
         dragSourceEntryIndex = nil
+        let sourceBundleId = config.hotkeys[from].bundleId
+        let targetBundleId: String? = row < visibleRows.count
+            ? config.hotkeys[visibleRows[row].entryIndex].bundleId
+            : nil
 
         // 落回原地：不改动、不保存
         let toInOriginal = row < visibleRows.count ? visibleRows[row].entryIndex : config.hotkeys.count
@@ -404,20 +554,28 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
         // 顺序变化会使录制中的条目下标失效，先取消录制
         if recorder.isRecording { recorder.cancel() }
 
-        let entry = config.hotkeys.remove(at: from)
-        let to = toInOriginal > from ? toInOriginal - 1 : toInOriginal // 先删除导致目标下标前移
-        config.hotkeys.insert(entry, at: to)
+        guard var updated = configStore.load(),
+              let latestFrom = updated.hotkeys.firstIndex(where: { $0.bundleId == sourceBundleId }) else {
+            reload()
+            return false
+        }
+        let entry = updated.hotkeys.remove(at: latestFrom)
+        let to: Int
+        if let targetBundleId,
+           let latestTarget = updated.hotkeys.firstIndex(where: { $0.bundleId == targetBundleId }) {
+            to = latestTarget
+        } else {
+            to = updated.hotkeys.endIndex
+        }
+        updated.hotkeys.insert(entry, at: to)
 
-        guard configStore.save(config) else {
+        guard configStore.save(updated) else {
             Notify.send(title: "HotkeyManager", body: "保存配置失败，详见日志")
             reload()
             return false
         }
         reload()
-        if let newRow = visibleRows.firstIndex(where: { $0.entryIndex == to }) {
-            tableView.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)
-            tableView.scrollRowToVisible(newRow)
-        }
+        selectEntry(bundleId: sourceBundleId)
         return true
     }
 
@@ -438,10 +596,13 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
                 if recordingIndex == item.entryIndex {
                     button.title = "录制中…"
                     button.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+                    button.bezelColor = .systemOrange
                 } else {
-                    button.title = item.keyDisplay
+                    button.title = item.keyDisplay == "未设置" ? "设置快捷键" : item.keyDisplay
                     button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+                    button.bezelColor = item.keyDisplay == "未设置" ? .controlAccentColor : nil
                 }
+                button.toolTip = "点击录制快捷键"
             }
         }
         return cell
@@ -455,14 +616,14 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
 
             let button = NSButton(title: "", target: self, action: #selector(keyCellClicked(_:)))
             button.bezelStyle = .rounded
-            button.controlSize = .small
+            button.controlSize = .regular
             button.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
             button.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(button)
             NSLayoutConstraint.activate([
                 // 撑满列宽：普通 / 录制中两种状态按钮宽度一致，不随文案变化
-                button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
-                button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
+                button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
+                button.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
                 button.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             ])
             return container
@@ -504,8 +665,7 @@ extension HotkeyListWindowController: NSTableViewDataSource, NSTableViewDelegate
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        addRemoveControl.setEnabled(row >= 0 && row < visibleRows.count, forSegment: 1)
+        updateUIState()
     }
 }
 
@@ -519,6 +679,7 @@ extension HotkeyListWindowController: NSWindowDelegate {
         }
         onWindowClose?()
     }
+
 }
 
 // MARK: - DragSnapshotTextField
@@ -529,5 +690,35 @@ extension HotkeyListWindowController: NSWindowDelegate {
 private final class DragSnapshotTextField: NSTextField {
     override func makeBackingLayer() -> CALayer {
         CALayer()
+    }
+}
+
+/// 只允许纵向滚动。NSScrollView 即使隐藏横向滚动条，默认仍会响应触控板横移。
+private final class VerticalOnlyClipView: NSClipView {
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var bounds = super.constrainBoundsRect(proposedBounds)
+        bounds.origin.x = 0
+        return bounds
+    }
+}
+
+/// 从事件入口忽略纯横向滚动；clipView 的坐标约束作为第二层保护，
+/// 避免触控板惯性或 AppKit 的弹性滚动让表格产生短暂横移。
+private final class VerticalOnlyScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        guard event.scrollingDeltaY != 0 else {
+            lockHorizontalOrigin()
+            return
+        }
+
+        super.scrollWheel(with: event)
+        lockHorizontalOrigin()
+    }
+
+    private func lockHorizontalOrigin() {
+        let origin = contentView.bounds.origin
+        guard origin.x != 0 else { return }
+        contentView.scroll(to: NSPoint(x: 0, y: origin.y))
+        reflectScrolledClipView(contentView)
     }
 }

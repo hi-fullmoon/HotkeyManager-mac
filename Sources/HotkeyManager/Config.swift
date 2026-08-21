@@ -5,7 +5,7 @@ import AppKit
 /// 单个热键配置
 /// - key: 组合键字符串，如 "cmd+1"、"ctrl+alt+a"，最后一段为按键，其余为修饰键
 /// - bundleId: 目标应用 Bundle Identifier（运行中查找、未运行启动、展示名称均由它推导）
-struct HotkeyEntry: Codable {
+struct HotkeyEntry: Codable, Equatable {
     var key: String = ""
     var bundleId: String = ""
 
@@ -18,7 +18,7 @@ struct HotkeyEntry: Codable {
     }
 }
 
-struct AppConfig: Codable {
+struct AppConfig: Codable, Equatable {
     var hotkeys: [HotkeyEntry] = []
 
     init() {}
@@ -35,8 +35,8 @@ struct AppConfig: Codable {
 final class ConfigStore {
     let fileURL: URL
 
-    init() {
-        fileURL = FileManager.default.homeDirectoryForCurrentUser
+    init(fileURL: URL? = nil) {
+        self.fileURL = fileURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".hotkeymanager.json")
     }
 

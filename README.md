@@ -11,7 +11,7 @@ macOS 全局热键工具（Windows 版 [HotkeyManager](../HotkeyManager) 的移�
 - 已运行未前台（含已隐藏）→ 还原并置前；已在前台 → 隐藏
 - 配置文件保存即热重载（300ms 防抖，解析失败保留旧热键并提示）
 - 「设置快捷键」图形窗口：点击录制快捷键、文件选择器添加应用、移除、拖拽排序，保存后自动生效
-- 菜单栏菜单：打开配置文件 / 设置快捷键 / 暂停快捷键 / 开关开机自启 / 退出
+- 菜单栏菜单：打开配置文件 / 设置快捷键 / 暂停快捷键 / 强制还原最小化窗口 / 开关开机自启 / 退出
 
 ## 构建与运行
 
@@ -20,7 +20,7 @@ macOS 全局热键工具（Windows 版 [HotkeyManager](../HotkeyManager) 的移�
 open HotkeyManager.app
 ```
 
-`build.sh` 会执行 `swift build -c release`，把产物组装成 `HotkeyManager.app` 并做 ad-hoc 签名（让辅助功能等 TCC 授权记录在重编译后保持稳定）。
+`build.sh` 会执行 `swift build -c release`，把产物组装成 `HotkeyManager.app` 并做 ad-hoc 签名（让通知等系统授权记录在重编译后保持稳定）。
 
 开发调试也可以直接：
 
@@ -43,7 +43,7 @@ swift run
 
 | 字段 | 说明 |
 |------|------|
-| `key` | 组合键，`+` 分隔，最后一段为按键、其余为修饰键。修饰键：`ctrl`（⌃）/ `alt`（⌥）/ `shift`（⇧）/ `cmd`（⌘，兼容 `win` 写法）；按键名：`0`~`9`（兼容 `D0`~`D9` 写法）、`F1`~`F15`、`A`~`Z`、`Space`、`Return`、`Tab`、`Escape`、方向键 `Up`/`Down`/`Left`/`Right` 等。例：`"cmd+1"`、`"ctrl+alt+a"` |
+| `key` | 组合键，`+` 分隔，最后一段为按键、其余为修饰键。修饰键：`ctrl`（⌃）/ `alt`（⌥）/ `shift`（⇧）/ `cmd`（⌘，兼容 `win` 写法）；按键名：`0`~`9`（兼容 `D0`~`D9` 写法）、`F1`~`F15`、`A`~`Z`、`Space`、`Return`、`Tab`、`Escape`、方向键 `Up`/`Down`/`Left`/`Right` 等。普通按键至少需要一个修饰键，`F1`~`F15` 可单独使用。例：`"cmd+1"`、`"ctrl+alt+a"` |
 | `bundleId` | 应用 Bundle Identifier：查找运行中应用、未运行时解析路径启动、通知展示名均由它推导 |
 
 查询应用 BundleId：
@@ -56,8 +56,8 @@ osascript -e 'id of app "WeChat"'
 
 ## 注意事项
 
-- 热键被系统或其他应用先注册时会失败，菜单栏会弹通知提示，换一个组合即可
-- 全局热键用 Carbon `RegisterEventHotKey` 实现，**不需要**辅助功能权限；只有「还原其他应用被最小化的窗口」需要（首次触发会弹授权引导，未授权时仅跳过还原，不影响置前）
+- 快捷键采用非独占注册，可与支持共存的工具同时响应；被系统保留或被其他应用独占时会提示注册失败
+- 默认的全局快捷键和应用激活不需要辅助功能权限；如个别应用无法通过 reopen 还原窗口，可在菜单栏主动开启「强制还原最小化窗口」并授权辅助功能
 - 「暂停热键」会真正注销所有热键（`UnregisterEventHotKey`），恢复时重新注册
 - 开机自启基于 `SMAppService`，开关状态可在 系统设置 → 通用 → 登录项 中查看
 - 修改代码后重新执行 `./build.sh` 即可，ad-hoc 签名保持授权记录不失效

@@ -1,6 +1,7 @@
 import Carbon
 
 /// 基于 Carbon RegisterEventHotKey 的全局热键管理器
+@MainActor
 final class HotKeyManager {
     static let shared = HotKeyManager()
 
@@ -48,7 +49,7 @@ final class HotKeyManager {
             return noErr
         }
 
-        InstallEventHandler(
+        let status = InstallEventHandler(
             GetEventDispatcherTarget(),
             callback,
             1,
@@ -56,6 +57,10 @@ final class HotKeyManager {
             nil,
             &eventHandlerRef
         )
+        if status != noErr {
+            eventHandlerRef = nil
+            NSLog("[HotkeyManager] 全局事件处理器安装失败（status: \(status)）")
+        }
     }
 
     /// 注册一个全局热键，返回是否成功（失败多为与系统/其他应用冲突）
@@ -102,7 +107,7 @@ final class HotKeyManager {
             entry.modifiers,
             hotKeyID,
             GetEventDispatcherTarget(),
-            0,
+            OptionBits(kEventHotKeyNoOptions),
             &ref
         )
         if status == noErr {
@@ -110,7 +115,7 @@ final class HotKeyManager {
             entries[id] = entry
             return true
         }
-        NSLog("[HotkeyManager] 热键注册失败（id: \(id), status: \(status)），可能与系统/其他应用冲突")
+        NSLog("[HotkeyManager] 快捷键注册失败（id: \(id), status: \(status)），可能被系统保留或已被独占注册")
         return false
     }
 

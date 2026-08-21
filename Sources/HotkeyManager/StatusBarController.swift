@@ -1,9 +1,10 @@
 import AppKit
 
 /// 菜单栏图标与下拉菜单（对齐 Windows 版托盘菜单）
-final class StatusBarController: NSObject {
+final class StatusBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let pauseItem = NSMenuItem()
+    private let forceRestoreItem = NSMenuItem()
     private let autostartItem = NSMenuItem()
     private var isPaused = false
 
@@ -61,6 +62,7 @@ final class StatusBarController: NSObject {
 
     private func buildMenu() {
         let menu = NSMenu()
+        menu.delegate = self
 
         menu.addItem(makeItem(title: "打开配置文件", action: #selector(openConfigAction), key: "o"))
         menu.addItem(makeItem(title: "设置快捷键", action: #selector(showHotkeyListAction), key: "l"))
@@ -71,7 +73,12 @@ final class StatusBarController: NSObject {
         pauseItem.target = self
         menu.addItem(pauseItem)
 
-        autostartItem.title = AutostartManager.isEnabled ? "关闭开机自启" : "开启开机自启"
+        refreshForceRestoreItem()
+        forceRestoreItem.action = #selector(toggleForceRestoreAction)
+        forceRestoreItem.target = self
+        menu.addItem(forceRestoreItem)
+
+        refreshAutostartItem()
         autostartItem.action = #selector(toggleAutostartAction)
         autostartItem.target = self
         menu.addItem(autostartItem)
@@ -80,6 +87,12 @@ final class StatusBarController: NSObject {
         menu.addItem(makeItem(title: "退出", action: #selector(quitAction), key: "q"))
 
         statusItem.menu = menu
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // 用户可能刚在系统设置中批准或撤销登录项，每次展开菜单都读取真实状态。
+        refreshForceRestoreItem()
+        refreshAutostartItem()
     }
 
     private func makeItem(title: String, action: Selector, key: String) -> NSMenuItem {
@@ -98,12 +111,69 @@ final class StatusBarController: NSObject {
         onTogglePause(isPaused)
     }
 
+    /// 可选的 AX 强制还原：默认关闭，只有用户主动开启时才请求辅助功能权限。
+    @objc private func toggleForceRestoreAction() {
+        let enabled = !AppSwitcher.isForceRestoreEnabled
+        let trusted = AppSwitcher.setForceRestoreEnabled(enabled)
+        refreshForceRestoreItem()
+        if !enabled {
+            Notify.send(title: "HotkeyManager", body: "强制还原最小化窗口已关闭")
+        } else if trusted {
+            Notify.send(title: "HotkeyManager", body: "强制还原最小化窗口已开启")
+        } else {
+            Notify.send(
+                title: "需要辅助功能权限",
+                body: "请在 系统设置 → 隐私与安全性 → 辅助功能 中授权 HotkeyManager；授权前仍会使用普通应用激活。"
+            )
+        }
+    }
+
+    private func refreshForceRestoreItem() {
+        let enabled = AppSwitcher.isForceRestoreEnabled
+        forceRestoreItem.state = enabled ? .on : .off
+        forceRestoreItem.title = enabled && !AppSwitcher.isAccessibilityTrusted
+            ? "强制还原最小化窗口（待授权）"
+            : "强制还原最小化窗口"
+    }
+
     /// 开启 ⇄ 关闭开机自启，标题按实际操作结果刷新（失败提示由 AutostartManager 发出）
     @objc private func toggleAutostartAction() {
-        let target = !AutostartManager.isEnabled
-        if AutostartManager.setEnabled(target) {
-            autostartItem.title = AutostartManager.isEnabled ? "关闭开机自启" : "开启开机自启"
-            Notify.send(title: "HotkeyManager", body: target ? "开机自启已开启" : "开机自启已关闭")
+        switch AutostartManager.state {
+        case .enabled:
+            if AutostartManager.setEnabled(false) {
+                Notify.send(title: "HotkeyManager", body: "开机自启已关闭")
+            }
+        case .disabled:
+            if AutostartManager.setEnabled(true) {
+                if AutostartManager.state == .requiresApproval {
+                    Notify.send(title: "需要确认开机自启", body: "请在系统设置的登录项中允许 HotkeyManager。")
+                    AutostartManager.openLoginItemsSettings()
+                } else {
+                    Notify.send(title: "HotkeyManager", body: "开机自启已开启")
+                }
+            }
+        case .requiresApproval:
+            AutostartManager.openLoginItemsSettings()
+        case .unavailable:
+            Notify.send(title: "HotkeyManager", body: "当前应用副本无法设置开机自启，请确认应用已正确签名。")
+        }
+        refreshAutostartItem()
+    }
+
+    private func refreshAutostartItem() {
+        switch AutostartManager.state {
+        case .enabled:
+            autostartItem.title = "关闭开机自启"
+            autostartItem.isEnabled = true
+        case .disabled:
+            autostartItem.title = "开启开机自启"
+            autostartItem.isEnabled = true
+        case .requiresApproval:
+            autostartItem.title = "批准开机自启…"
+            autostartItem.isEnabled = true
+        case .unavailable:
+            autostartItem.title = "开机自启不可用"
+            autostartItem.isEnabled = false
         }
     }
 

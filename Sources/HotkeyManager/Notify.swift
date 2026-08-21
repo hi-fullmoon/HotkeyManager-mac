@@ -4,7 +4,7 @@ import UserNotifications
 enum Notify {
     /// 点击状态栏菜单时 App 处于前台，系统默认不显示前台 App 的横幅，
     /// 需在 delegate 中显式返回 .banner 才能弹出提示
-    private final class Delegate: NSObject, UNUserNotificationCenterDelegate {
+    private final class Delegate: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
         func userNotificationCenter(_ center: UNUserNotificationCenter,
                                     willPresent notification: UNNotification,
                                     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {

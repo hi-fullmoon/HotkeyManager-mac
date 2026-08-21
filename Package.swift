@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "HotkeyManager",
             path: "Sources/HotkeyManager"
+        ),
+        .testTarget(
+            name: "HotkeyManagerTests",
+            dependencies: ["HotkeyManager"],
+            path: "Tests/HotkeyManagerTests"
         )
     ]
 )

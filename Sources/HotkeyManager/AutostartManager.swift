@@ -2,8 +2,25 @@ import ServiceManagement
 
 /// 开机自启管理（SMAppService，macOS 13+）
 enum AutostartManager {
-    static var isEnabled: Bool {
-        SMAppService.mainApp.status == .enabled
+    enum State {
+        case disabled
+        case enabled
+        case requiresApproval
+        case unavailable
+    }
+
+    static var state: State {
+        switch SMAppService.mainApp.status {
+        case .notRegistered: .disabled
+        case .enabled: .enabled
+        case .requiresApproval: .requiresApproval
+        case .notFound: .unavailable
+        @unknown default: .unavailable
+        }
+    }
+
+    static func openLoginItemsSettings() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 
     /// 设置开机自启，返回操作是否成功
