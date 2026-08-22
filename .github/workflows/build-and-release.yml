@@ -1,0 +1,161 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Test and package
+    runs-on: macos-14
+    timeout-minutes: 20
+    outputs:
+      artifact-name: ${{ steps.metadata.outputs.artifact-name }}
+      release-version: ${{ steps.metadata.outputs.release-version }}
+      changelog-version: ${{ steps.metadata.outputs.changelog-version }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Resolve build metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          release_version="$plist_version"
+          changelog_version="$plist_version"
+          artifact_version="$plist_version-${GITHUB_SHA:0:7}"
+          prerelease=false
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+              echo "Tag 必须符合 vX.Y.Z 或 vX.Y.Z-suffix：$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+
+            tag_base_version="${BASH_REMATCH[1]}"
+            if [[ "$tag_base_version" != "$plist_version" ]]; then
+              echo "Tag 版本 $tag_base_version 与 Info.plist 版本 $plist_version 不一致" >&2
+              exit 1
+            fi
+
+            release_version="${GITHUB_REF_NAME#v}"
+            changelog_version="$tag_base_version"
+            artifact_version="$release_version"
+            if [[ "$release_version" == *-* ]]; then
+              prerelease=true
+            fi
+          fi
+
+          artifact_name="HotkeyManager-$artifact_version-macOS-universal"
+          {
+            echo "artifact-name=$artifact_name"
+            echo "artifact-version=$artifact_version"
+            echo "bundle-version=$plist_version"
+            echo "release-version=$release_version"
+            echo "changelog-version=$changelog_version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            ./scripts/changelog-section.sh "$changelog_version" >/dev/null
+          fi
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build Universal 2 package
+        env:
+          ARCHS: arm64 x86_64
+          ARTIFACT_VERSION: ${{ steps.metadata.outputs.artifact-version }}
+          VERSION: ${{ steps.metadata.outputs.bundle-version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./scripts/package-release.sh
+
+      - name: Verify packaged application
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_dir="$(mktemp -d "$RUNNER_TEMP/hotkeymanager-verify.XXXXXX")"
+          ditto -x -k dist/*.zip "$verify_dir"
+          executable="$verify_dir/HotkeyManager.app/Contents/MacOS/HotkeyManager"
+          [[ "$(lipo -archs "$executable")" == *arm64* ]]
+          [[ "$(lipo -archs "$executable")" == *x86_64* ]]
+          codesign --verify --deep --strict "$verify_dir/HotkeyManager.app"
+          (cd dist && shasum -a 256 -c ./*.sha256)
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.metadata.outputs.artifact-name }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Download packaged application
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: release-assets
+
+      - name: Create or update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.build.outputs.release-version }}
+          CHANGELOG_VERSION: ${{ needs.build.outputs.changelog-version }}
+          IS_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          ./scripts/changelog-section.sh "$CHANGELOG_VERSION" > release-notes.md
+          if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" \
+              --title "HotkeyManager $RELEASE_VERSION" \
+              --notes-file release-notes.md \
+              --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG_NAME" release-assets/* \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            release_args=(
+              "$TAG_NAME"
+              release-assets/*
+              --title "HotkeyManager $RELEASE_VERSION"
+              --notes-file release-notes.md
+              --verify-tag
+              --repo "$GITHUB_REPOSITORY"
+            )
+            if [[ "$IS_PRERELEASE" == "true" ]]; then
+              release_args+=(--prerelease)
+            fi
+            gh release create "${release_args[@]}"
+          fi

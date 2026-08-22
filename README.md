@@ -83,10 +83,35 @@ osascript -e 'id of app "WeChat"'
 
 ## 打包
 
+构建 Universal 2（Apple Silicon + Intel）发布包：
+
 ```bash
-mkdir -p dist
-ditto -c -k --sequesterRsrc --keepParent \
-  HotkeyManager.app dist/HotkeyManager-0.1.0-macOS-arm64.zip
+./scripts/package-release.sh
 ```
 
-`HotkeyManager.app/` 和 `dist/` 已加入 `.gitignore`。
+产物位于 `dist/`，包含 ZIP 和对应的 SHA-256 校验文件。`HotkeyManager.app/` 和 `dist/` 已加入 `.gitignore`。
+
+## 自动构建与发布
+
+GitHub Actions 会在以下情况运行：
+
+- Pull Request 和 `main` 分支提交：运行测试，并保留 14 天的 Universal 2 构建产物。
+- 推送 `vX.Y.Z` 标签：构建后创建 GitHub Release，上传 ZIP 和 SHA-256 文件，并使用对应 changelog 作为发布说明。
+- 推送 `vX.Y.Z-suffix` 标签：例如 `v0.2.0-beta.1`，发布为 pre-release。
+
+发布前，先在 `[Unreleased]` 记录变更，使用脚本更新版本并归档 changelog，然后推送提交和标签：
+
+```bash
+# 先把本次变更写入 CHANGELOG.md 的 [Unreleased]
+# 再使用 patch、minor、major 或直接指定版本号
+./scripts/bump-version.sh minor
+
+git add Resources/Info.plist CHANGELOG.md
+git commit -m "chore: bump version to 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
+```
+
+`bump-version.sh` 会将 `[Unreleased]` 归档为带日期的新版本，并默认将 `CFBundleVersion` 加 1。可使用 `--build-number N` 指定构建号、`--keep-build-number` 保持不变，或使用 `--date YYYY-MM-DD` 指定归档日期。执行前可加 `--dry-run` 预览结果。
+
+工作流会校验标签与 `Info.plist` 版本一致，避免误发版本。当前自动产物采用 ad-hoc 签名；如需绕过 Gatekeeper 警告，还需配置 Apple Developer ID 签名与公证。
